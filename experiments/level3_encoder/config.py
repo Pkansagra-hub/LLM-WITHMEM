@@ -53,7 +53,7 @@ class TrainingConfig:
     num_query_templates: int = 50
 
     # Optimization
-    batch_size: int = 1  # per-GPU; increase on H100/A100
+    batch_size: int = 16  # per-GPU; increase on H100/A100
     gradient_accumulation_steps: int = 8
     learning_rate: float = 1e-4
     weight_decay: float = 0.01
