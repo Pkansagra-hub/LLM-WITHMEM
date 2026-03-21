@@ -5,11 +5,11 @@ Architecture:
   5 memory banks (L4-L8) with query-conditioned dynamic gating,
   working memory cross-attention, and per-layer KV injection.
 
-  SmolLM2-1.7B-Instruct specs:
-    24 layers, 32 KV heads, d_head=64, vocab=49152
-    Chat template: <|im_start|>system\n...<|im_end|>\n<|im_start|>user\n...<|im_end|>\n<|im_start|>assistant\n
+  Llama-3.1-8B-Instruct specs:
+    32 layers, 8 KV heads (GQA), d_head=128, vocab=128256
+    Chat template: <|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n...
 
-Target: ~51M trainable params. Upper bound: 200M.
+Target: ~75M trainable params. Upper bound: 200M.
 """
 
 from dataclasses import dataclass, field
@@ -19,12 +19,12 @@ from dataclasses import dataclass, field
 class ModelConfig:
     """Frozen LLM configuration."""
 
-    model_id: str = "HuggingFaceTB/SmolLM2-1.7B-Instruct"
+    model_id: str = "meta-llama/Llama-3.1-8B-Instruct"
     dtype: str = "float16"
-    num_layers: int = 24
-    num_kv_heads: int = 32
-    head_dim: int = 64
-    hidden_size: int = 2048  # num_kv_heads * head_dim
+    num_layers: int = 32
+    num_kv_heads: int = 8  # GQA: 32 attn heads, 8 KV heads
+    head_dim: int = 128
+    hidden_size: int = 4096
 
 
 @dataclass
@@ -67,7 +67,7 @@ class EncoderConfig:
     """Multi-bank encoder architecture."""
 
     # Shared dimensions
-    d_model: int = 512
+    d_model: int = 768
     n_heads: int = 8
     dropout: float = 0.1
 
@@ -83,10 +83,10 @@ class EncoderConfig:
     num_output_slots: int = 32  # M — memory vectors after selection
 
     # Layer-group projections
-    num_layer_groups: int = 4  # groups of 6 layers for SmolLM2-24L
+    num_layer_groups: int = 4  # groups of 8 layers for Llama-32L
 
     # Dynamic gate MLP
-    gate_hidden_dim: int = 1024
+    gate_hidden_dim: int = 1536
     gate_init_bias: float = -2.0  # sigmoid(-2) ≈ 0.12
 
 

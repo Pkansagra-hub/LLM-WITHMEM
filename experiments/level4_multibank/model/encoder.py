@@ -83,7 +83,7 @@ class ProfileEncoder(nn.Module):
     """Encodes profile text into 5 bank-specific memory slot tensors.
 
     Steps:
-        1. Project LLM embeddings (2048) → d_model
+        1. Project LLM embeddings (hidden_size) → d_model
         2. N-layer transformer encoder (self-attention over full profile)
         3. 5 Perceiver heads, one per bank, resample into bank-specific slots
     """
@@ -318,7 +318,7 @@ class MultiBankMemoryEncoder(nn.Module):
         → QueryEncoder → query_vector
         → WorkingMemory(query_vector, all_slots) → M memory vectors
         → DynamicGateNetwork(query_vector) → per-head gates
-        → 4-group K,V projections × gates → 24 (K, V) pairs for LLM injection
+        → 4-group K,V projections × gates → num_layers (K, V) pairs for LLM injection
     """
 
     def __init__(self, embedding_layer: nn.Embedding, config: Config):
@@ -332,7 +332,7 @@ class MultiBankMemoryEncoder(nn.Module):
         self.num_kv_heads = mc.num_kv_heads
         self.head_dim = mc.head_dim
         self.num_output_slots = ec.num_output_slots
-        kv_dim = mc.num_kv_heads * mc.head_dim  # 2048
+        kv_dim = mc.num_kv_heads * mc.head_dim
 
         # --- Sub-modules ---
         self.profile_encoder = ProfileEncoder(
@@ -374,7 +374,7 @@ class MultiBankMemoryEncoder(nn.Module):
         )
 
         # Map each LLM layer to a group index
-        layers_per_group = mc.num_layers // ec.num_layer_groups  # 24 / 4 = 6
+        layers_per_group = mc.num_layers // ec.num_layer_groups
         self.register_buffer(
             "layer_to_group",
             torch.arange(mc.num_layers) // layers_per_group,
@@ -398,7 +398,7 @@ class MultiBankMemoryEncoder(nn.Module):
             query_mask:   (B, Q)
             return_diagnostics: if True, return (kv_pairs, diag_dict)
         Returns:
-            kv_pairs: list of 24 (K, V) tuples, each (B, num_kv_heads, M, head_dim) in fp16
+            kv_pairs: list of num_layers (K, V) tuples, each (B, num_kv_heads, M, head_dim) in fp16
         """
         B = profile_ids.shape[0]
 

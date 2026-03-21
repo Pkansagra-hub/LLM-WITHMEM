@@ -18,7 +18,7 @@ def build_injection_cache(
     """Pack encoder K,V pairs into a DynamicCache for LLM injection.
 
     Args:
-        kv_pairs: list of 24 (K, V), each (B, num_kv_heads, M, head_dim) in fp16
+        kv_pairs: list of num_layers (K, V), each (B, num_kv_heads, M, head_dim) in fp16
     Returns:
         DynamicCache populated with memory K,V at each layer
     """
@@ -37,10 +37,10 @@ def forward_with_injection(
     """Run LLM forward with injected memory K,V + suffix tokens.
 
     Args:
-        model: frozen LLM (e.g. SmolLM2-1.7B-Instruct)
+        model: frozen LLM (e.g. Llama-3.1-8B-Instruct)
         suffix_ids:  (B, S) — tokenized suffix (user turn + assistant prompt)
         suffix_mask: (B, S) — 1 = real, 0 = pad
-        kv_pairs: 24 (K, V) tuples from encoder
+        kv_pairs: num_layers (K, V) tuples from encoder
     Returns:
         logits: (B, S, vocab_size)
     """
