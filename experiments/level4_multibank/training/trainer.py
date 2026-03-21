@@ -401,11 +401,26 @@ class Trainer:
                     if step % cfg.eval_every == 0:
                         val_result = self.validate()
                         print(
-                            f"\n  >>> EVAL step {step}: "
-                            f"val_loss={val_result['val_loss']:.4f} "
-                            f"(n={val_result['val_samples']})\n"
+                            f"\n  {'=' * 60}\n"
+                            f"  EVAL step {step}:\n"
+                            f"    val_loss:       {val_result['val_loss']:.4f}\n"
+                            f"    KW hit ratio:   {val_result['kw_inject_ratio']:.1f}% inject  |  {val_result['kw_gold_ratio']:.1f}% gold\n"
+                            f"    PPL:            {val_result['ppl_inject']:.1f} inject  |  {val_result['ppl_gold']:.1f} gold\n"
+                            f"    Gate:           mean={val_result['gate_mean']:.4f}  std={val_result['gate_std']:.4f}\n"
+                            f"    (n={val_result['val_samples']} loss, {val_result['gen_samples']} gen)\n"
+                            f"  {'=' * 60}\n"
                         )
-                        self.history[-1]["val_loss"] = val_result["val_loss"]
+                        self.history[-1].update(
+                            {
+                                "val_loss": val_result["val_loss"],
+                                "kw_inject_ratio": val_result["kw_inject_ratio"],
+                                "kw_gold_ratio": val_result["kw_gold_ratio"],
+                                "ppl_inject": val_result["ppl_inject"],
+                                "ppl_gold": val_result["ppl_gold"],
+                                "gate_mean": val_result["gate_mean"],
+                                "gate_std": val_result["gate_std"],
+                            }
+                        )
 
                         if val_result["val_loss"] < best_val_loss:
                             best_val_loss = val_result["val_loss"]
