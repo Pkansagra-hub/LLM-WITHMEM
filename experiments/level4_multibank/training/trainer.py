@@ -197,16 +197,17 @@ class Trainer:
 
     @torch.no_grad()
     def validate(self, max_samples: int = 50) -> dict:
-        """Run validation: compute average loss on val set."""
+        """Run validation: KL loss + keyword hit ratio + PPL + gate stats."""
         self.encoder.eval()
+        device = self.device
         total_loss = 0.0
-        n = 0
+        n_loss = 0
 
+        # ── Part 1: KL loss on full val subset ──
         for batch in self.val_loader:
-            if n >= max_samples:
+            if n_loss >= max_samples:
                 break
 
-            device = self.device
             profile_ids = batch["profile_ids"].to(device)
             profile_mask = batch["profile_mask"].to(device)
             query_ids = batch["query_ids"].to(device)
@@ -232,10 +233,104 @@ class Trainer:
 
             loss, _ = combined_loss(inject_logits[:, :S, :], gold_suffix, suffix_mask)
             total_loss += loss.item()
-            n += 1
+            n_loss += 1
+
+        val_loss = total_loss / max(n_loss, 1)
+
+        # ── Part 2: Generation-based metrics (smaller subset — generation is slow) ──
+        gen_samples = min(20, max_samples, len(self.val_dataset))
+        kw_inject_total = 0
+        kw_gold_total = 0
+        kw_facts_total = 0
+        ppl_inject_sum = 0.0
+        ppl_gold_sum = 0.0
+        gate_means = []
+        gate_stds = []
+        n_gen = 0
+
+        for idx in range(gen_samples):
+            sample = self.val_dataset[idx]
+            raw = self.val_dataset.data[idx]
+
+            p_ids = sample["profile_ids"].unsqueeze(0).to(device)
+            p_mask = sample["profile_mask"].unsqueeze(0).to(device)
+            q_ids = sample["query_ids"].unsqueeze(0).to(device)
+            q_mask = sample["query_mask"].unsqueeze(0).to(device)
+
+            # Encoder forward with diagnostics
+            kv_pairs, diag = self.encoder(
+                p_ids, p_mask, q_ids, q_mask, return_diagnostics=True
+            )
+
+            # Generate with injection
+            suffix_text = _build_suffix(self.tokenizer, raw["query_text"])
+            suffix_ids = self.tokenizer(suffix_text, return_tensors="pt")[
+                "input_ids"
+            ].to(device)
+
+            inject_text = generate_with_injection(
+                self.llm,
+                self.tokenizer,
+                kv_pairs,
+                suffix_ids,
+                max_new_tokens=self.config.training.max_new_tokens,
+                temperature=0.7,
+            )
+
+            # Gold generation
+            g_ids = sample["gold_ids"].unsqueeze(0).to(device)
+            g_mask = sample["gold_mask"].unsqueeze(0).to(device)
+            gold_out = self.llm.generate(
+                g_ids,
+                attention_mask=g_mask,
+                max_new_tokens=self.config.training.max_new_tokens,
+                do_sample=False,
+            )
+            gold_text = self.tokenizer.decode(
+                gold_out[0][g_ids.shape[1] :], skip_special_tokens=True
+            )
+
+            # Keywords
+            facts = raw["relevant_facts"]
+            kw_i = score_keywords(inject_text, facts)
+            kw_g = score_keywords(gold_text, facts)
+            kw_inject_total += kw_i["hit_count"]
+            kw_gold_total += kw_g["hit_count"]
+            kw_facts_total += kw_i["total_facts"]
+
+            # PPL
+            ppl_inject_sum += score_coherence(
+                self.llm, self.tokenizer, inject_text, device
+            )
+            ppl_gold_sum += score_coherence(self.llm, self.tokenizer, gold_text, device)
+
+            # Gate stats
+            gate_vals = diag["gate_values"].squeeze(0)
+            gate_means.append(gate_vals.mean().item())
+            gate_stds.append(gate_vals.std().item())
+
+            n_gen += 1
+
+        # Aggregate
+        kw_ratio = kw_inject_total / max(kw_facts_total, 1) * 100
+        kw_gold_ratio = kw_gold_total / max(kw_facts_total, 1) * 100
+        avg_ppl_inject = ppl_inject_sum / max(n_gen, 1)
+        avg_ppl_gold = ppl_gold_sum / max(n_gen, 1)
+        avg_gate_mean = sum(gate_means) / max(n_gen, 1)
+        avg_gate_std = sum(gate_stds) / max(n_gen, 1)
 
         self.encoder.train()
-        return {"val_loss": total_loss / max(n, 1), "val_samples": n}
+        return {
+            "val_loss": val_loss,
+            "val_samples": n_loss,
+            "kw_inject_ratio": round(kw_ratio, 2),
+            "kw_gold_ratio": round(kw_gold_ratio, 2),
+            "ppl_inject": round(avg_ppl_inject, 2),
+            "ppl_gold": round(avg_ppl_gold, 2),
+            "gate_mean": round(avg_gate_mean, 4),
+            "gate_std": round(avg_gate_std, 4),
+            "gen_samples": n_gen,
+        }
 
     def train(self):
         """Full training loop with gradient accumulation."""
