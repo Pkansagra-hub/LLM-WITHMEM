@@ -96,7 +96,11 @@ def main():
     query_episodic = "What did I do recently?"
     query_emotional = "What topics make me excited?"
 
-    suffix_template = "<|im_start|>user\n{q}<|im_end|>\n<|im_start|>assistant\n"
+    def build_suffix(query):
+        messages = [{"role": "user", "content": query}]
+        return tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
 
     # Tokenize
     def tokenize(text, max_len):
@@ -115,10 +119,10 @@ def main():
     q_emo_ids, q_emo_mask = tokenize(query_emotional, cfg.encoder.max_query_tokens)
 
     suffix_sem_ids, suffix_sem_mask = tokenize(
-        suffix_template.format(q=query_semantic), cfg.encoder.max_query_tokens
+        build_suffix(query_semantic), cfg.encoder.max_query_tokens
     )
     suffix_epi_ids, suffix_epi_mask = tokenize(
-        suffix_template.format(q=query_episodic), cfg.encoder.max_query_tokens
+        build_suffix(query_episodic), cfg.encoder.max_query_tokens
     )
 
     # Gold prompts (with ONLY relevant facts)
