@@ -66,7 +66,7 @@ class ProfileQueryDataset(Dataset):
         )
 
         # --- Suffix (chat-formatted user turn) → LLM inject forward ---
-        suffix_text = SUFFIX_TEMPLATE.format(query=ex["query_text"])
+        suffix_text = _build_suffix(self.tokenizer, ex["query_text"])
         suffix_enc = self.tokenizer(
             suffix_text,
             max_length=self.max_query,

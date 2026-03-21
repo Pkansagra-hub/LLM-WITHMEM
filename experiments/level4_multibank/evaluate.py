@@ -21,7 +21,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .config import Config
-from .data.dataset import SUFFIX_TEMPLATE, ProfileQueryDataset
+from .data.dataset import ProfileQueryDataset, _build_suffix
 from .model.encoder import MultiBankMemoryEncoder
 from .model.injector import generate_with_injection
 
@@ -86,7 +86,7 @@ def evaluate_encoder(config, llm, tokenizer, encoder, val_data, max_samples=50):
 
         # Generate with injection
         raw_data = val_data.data[idx]
-        suffix_text = SUFFIX_TEMPLATE.format(query=raw_data["query_text"])
+        suffix_text = _build_suffix(tokenizer, raw_data["query_text"])
         suffix_ids = tokenizer(suffix_text, return_tensors="pt")["input_ids"].to(device)
 
         inject_text = generate_with_injection(
