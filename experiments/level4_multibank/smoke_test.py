@@ -42,7 +42,7 @@ def main():
     device = cfg.device
 
     # ── Load LLM ──────────────────────────────────────────────────
-    print_header("Loading SmolLM2-1.7B-Instruct")
+    print_header(f"Loading {cfg.model.model_id}")
     tokenizer = AutoTokenizer.from_pretrained(cfg.model.model_id)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
