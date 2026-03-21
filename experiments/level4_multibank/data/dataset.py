@@ -17,7 +17,14 @@ from torch.utils.data import Dataset
 SYSTEM_TEMPLATE = (
     "You are a helpful assistant. Here is relevant information about the user:\n{facts}"
 )
-SUFFIX_TEMPLATE = "<|im_start|>user\n{query}<|im_end|>\n<|im_start|>assistant\n"
+
+
+def _build_suffix(tokenizer, query: str) -> str:
+    """Build chat-formatted suffix (user turn + generation prompt) using tokenizer's template."""
+    messages = [{"role": "user", "content": query}]
+    return tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
 
 
 class ProfileQueryDataset(Dataset):
