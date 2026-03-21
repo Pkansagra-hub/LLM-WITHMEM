@@ -106,10 +106,14 @@ class Trainer:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.history = []
 
-    def _gold_forward(self, gold_ids: torch.Tensor, gold_mask: torch.Tensor) -> torch.Tensor:
+    def _gold_forward(
+        self, gold_ids: torch.Tensor, gold_mask: torch.Tensor
+    ) -> torch.Tensor:
         """Run gold-standard forward pass. Returns logits."""
         with torch.no_grad():
-            outputs = self.llm(input_ids=gold_ids, attention_mask=gold_mask, use_cache=False)
+            outputs = self.llm(
+                input_ids=gold_ids, attention_mask=gold_mask, use_cache=False
+            )
         return outputs.logits
 
     def _inject_forward(
@@ -147,15 +151,18 @@ class Trainer:
         # Process per-sample (gold/inject have different effective lengths)
         for i in range(B):
             # Gold forward
-            gi = gold_ids[i:i+1]
-            gm = gold_mask[i:i+1]
+            gi = gold_ids[i : i + 1]
+            gm = gold_mask[i : i + 1]
             gold_logits = self._gold_forward(gi, gm)
 
             # Inject forward
             inject_logits = self._inject_forward(
-                profile_ids[i:i+1], profile_mask[i:i+1],
-                query_ids[i:i+1], query_mask[i:i+1],
-                suffix_ids[i:i+1], suffix_mask[i:i+1],
+                profile_ids[i : i + 1],
+                profile_mask[i : i + 1],
+                query_ids[i : i + 1],
+                query_mask[i : i + 1],
+                suffix_ids[i : i + 1],
+                suffix_mask[i : i + 1],
             )
 
             # Align: take last S logits from gold where S = suffix length
@@ -163,12 +170,16 @@ class Trainer:
             gold_len = gm.sum().item()
             # Gold logits at positions covering suffix (last S tokens of non-pad region)
             suffix_start = max(0, int(gold_len) - S)
-            gold_suffix = gold_logits[:, suffix_start:suffix_start + S, :]
+            gold_suffix = gold_logits[:, suffix_start : suffix_start + S, :]
             inject_suffix = inject_logits[:, :S, :]
-            sm = suffix_mask[i:i+1]
+            sm = suffix_mask[i : i + 1]
 
-            loss, metrics = combined_loss(inject_suffix, gold_suffix, sm,
-                                          lambda_distill=self.config.training.lambda_distill)
+            loss, metrics = combined_loss(
+                inject_suffix,
+                gold_suffix,
+                sm,
+                lambda_distill=self.config.training.lambda_distill,
+            )
             total_loss = total_loss + loss
             total_distill += metrics["loss_distill"]
             valid += 1
@@ -210,12 +221,14 @@ class Trainer:
 
             # Inject
             kv_pairs = self.encoder(profile_ids, profile_mask, query_ids, query_mask)
-            inject_logits = forward_with_injection(self.llm, suffix_ids, suffix_mask, kv_pairs)
+            inject_logits = forward_with_injection(
+                self.llm, suffix_ids, suffix_mask, kv_pairs
+            )
 
             S = suffix_ids.shape[1]
             gold_len = gold_mask.sum().item()
             suffix_start = max(0, int(gold_len) - S)
-            gold_suffix = gold_logits[:, suffix_start:suffix_start + S, :]
+            gold_suffix = gold_logits[:, suffix_start : suffix_start + S, :]
 
             loss, _ = combined_loss(inject_logits[:, :S, :], gold_suffix, suffix_mask)
             total_loss += loss.item()
@@ -280,11 +293,13 @@ class Trainer:
                             f"time {elapsed:.0f}s"
                         )
 
-                    self.history.append({
-                        "step": step,
-                        "loss": loss_dict["loss_total"],
-                        "distill": loss_dict["loss_distill"],
-                    })
+                    self.history.append(
+                        {
+                            "step": step,
+                            "loss": loss_dict["loss_total"],
+                            "distill": loss_dict["loss_distill"],
+                        }
+                    )
 
                     # Evaluate
                     if step % cfg.eval_every == 0:

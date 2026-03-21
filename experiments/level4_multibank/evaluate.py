@@ -21,7 +21,7 @@ import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from .config import Config
-from .data.dataset import ProfileQueryDataset, SUFFIX_TEMPLATE
+from .data.dataset import SUFFIX_TEMPLATE, ProfileQueryDataset
 from .model.encoder import MultiBankMemoryEncoder
 from .model.injector import generate_with_injection
 
@@ -29,7 +29,11 @@ from .model.injector import generate_with_injection
 def score_keywords(text: str, facts: list[str]) -> dict:
     """Count how many profile facts appear in generated text."""
     text_lower = text.lower()
-    hits = [f for f in facts if any(word.lower() in text_lower for word in f.split() if len(word) > 3)]
+    hits = [
+        f
+        for f in facts
+        if any(word.lower() in text_lower for word in f.split() if len(word) > 3)
+    ]
     return {
         "hit_count": len(hits),
         "total_facts": len(facts),
@@ -86,7 +90,10 @@ def evaluate_encoder(config, llm, tokenizer, encoder, val_data, max_samples=50):
         suffix_ids = tokenizer(suffix_text, return_tensors="pt")["input_ids"].to(device)
 
         inject_text = generate_with_injection(
-            llm, tokenizer, kv_pairs, suffix_ids,
+            llm,
+            tokenizer,
+            kv_pairs,
+            suffix_ids,
             max_new_tokens=config.training.max_new_tokens,
             temperature=0.7,
         )
@@ -101,7 +108,7 @@ def evaluate_encoder(config, llm, tokenizer, encoder, val_data, max_samples=50):
             do_sample=False,
         )
         gold_text = tokenizer.decode(
-            gold_out[0][gold_ids.shape[1]:], skip_special_tokens=True
+            gold_out[0][gold_ids.shape[1] :], skip_special_tokens=True
         )
 
         # Score
@@ -115,19 +122,21 @@ def evaluate_encoder(config, llm, tokenizer, encoder, val_data, max_samples=50):
         # Gate stats
         gate_values = diag["gate_values"].squeeze(0)  # (24, 32)
 
-        results.append({
-            "query": raw_data["query_text"],
-            "relevant_types": raw_data["relevant_types"],
-            "inject_text": inject_text[:300],
-            "gold_text": gold_text[:300],
-            "kw_inject": kw_inject["hit_count"],
-            "kw_gold": kw_gold["hit_count"],
-            "kw_total": kw_inject["total_facts"],
-            "ppl_inject": round(ppl_inject, 2),
-            "ppl_gold": round(ppl_gold, 2),
-            "gate_mean": round(gate_values.mean().item(), 4),
-            "gate_std": round(gate_values.std().item(), 4),
-        })
+        results.append(
+            {
+                "query": raw_data["query_text"],
+                "relevant_types": raw_data["relevant_types"],
+                "inject_text": inject_text[:300],
+                "gold_text": gold_text[:300],
+                "kw_inject": kw_inject["hit_count"],
+                "kw_gold": kw_gold["hit_count"],
+                "kw_total": kw_inject["total_facts"],
+                "ppl_inject": round(ppl_inject, 2),
+                "ppl_gold": round(ppl_gold, 2),
+                "gate_mean": round(gate_values.mean().item(), 4),
+                "gate_std": round(gate_values.std().item(), 4),
+            }
+        )
         n += 1
 
         if n % 10 == 0:
@@ -174,7 +183,7 @@ def print_eval_summary(results: dict):
     print(f"  Samples evaluated:  {s['num_samples']}")
     print(f"  Avg keywords (inject):  {s['avg_kw_inject']:.2f}")
     print(f"  Avg keywords (gold):    {s['avg_kw_gold']:.2f}")
-    kw_ratio = s['avg_kw_inject'] / max(s['avg_kw_gold'], 0.01) * 100
+    kw_ratio = s["avg_kw_inject"] / max(s["avg_kw_gold"], 0.01) * 100
     print(f"  KW ratio (inject/gold): {kw_ratio:.1f}%")
     print(f"  Avg PPL (inject):       {s['avg_ppl_inject']:.2f}")
     print(f"  Avg PPL (gold):         {s['avg_ppl_gold']:.2f}")
@@ -184,9 +193,11 @@ def print_eval_summary(results: dict):
         print()
         print("  Per query-type breakdown:")
         for t, ts in s["per_type"].items():
-            print(f"    {t:12s}: n={ts['count']:3d}  "
-                  f"kw_inject={ts['avg_kw_inject']:.2f}  "
-                  f"kw_gold={ts['avg_kw_gold']:.2f}")
+            print(
+                f"    {t:12s}: n={ts['count']:3d}  "
+                f"kw_inject={ts['avg_kw_inject']:.2f}  "
+                f"kw_gold={ts['avg_kw_gold']:.2f}"
+            )
     print("=" * 60)
 
 
@@ -229,7 +240,8 @@ def main():
 
     checkpoint = torch.load(ckpt_path, map_location=config.device, weights_only=True)
     encoder = MultiBankMemoryEncoder(
-        embedding_layer=model.get_input_embeddings(), config=config,
+        embedding_layer=model.get_input_embeddings(),
+        config=config,
     ).to(config.device)
     encoder.load_state_dict(checkpoint["encoder_state_dict"])
     encoder.eval()
@@ -248,7 +260,9 @@ def main():
     )
 
     # Evaluate
-    results = evaluate_encoder(config, model, tokenizer, encoder, val_dataset, max_samples=args.max_samples)
+    results = evaluate_encoder(
+        config, model, tokenizer, encoder, val_dataset, max_samples=args.max_samples
+    )
     print_eval_summary(results)
 
     # Save
