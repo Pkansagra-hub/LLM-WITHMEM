@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# PyTorch checkpoints & outputs (re-generate locally)
+experiments/level3_encoder/outputs/
+experiments/level3_encoder/logs/
+
+# Generated data (re-generate with generate_profiles.py)
+experiments/level3_encoder/data/profiles_train.json
+experiments/level3_encoder/data/profiles_val.json
+experiments/level3_encoder/data/queries.json
+
+# Results (experiment artifacts)
+experiments/results/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+
+# HuggingFace cache
+.cache/
