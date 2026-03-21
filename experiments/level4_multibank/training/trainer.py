@@ -25,9 +25,10 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
 from ..config import Config
-from ..data.dataset import ProfileQueryDataset, collate_fn
+from ..data.dataset import ProfileQueryDataset, _build_suffix, collate_fn
+from ..evaluate import score_coherence, score_keywords
 from ..model.encoder import MultiBankMemoryEncoder
-from ..model.injector import forward_with_injection
+from ..model.injector import forward_with_injection, generate_with_injection
 from ..training.losses import combined_loss
 
 
