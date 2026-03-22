@@ -127,15 +127,12 @@ class Trainer:
             kv_norms = []
             kv_means_k = []
             kv_means_v = []
-            # Support both old (tuple-based) and new (.key_cache) DynamicCache APIs
-            if hasattr(cache, "key_cache"):
-                num_layers = len(cache.key_cache)
-                get_kv = lambda i: (cache.key_cache[i], cache.value_cache[i])
-            else:
-                num_layers = len(cache)
-                get_kv = lambda i: cache[i]
-            for layer_idx in range(num_layers):
-                k, v = get_kv(layer_idx)
+            # Convert DynamicCache → tuple-of-tuples for universal compat
+            if hasattr(cache, "to_legacy_cache"):
+                cache = cache.to_legacy_cache()
+            elif hasattr(cache, "key_cache"):
+                cache = list(zip(cache.key_cache, cache.value_cache))
+            for k, v in cache:
                 kv_norms.append(k.float().norm(dim=-1).mean())
                 kv_norms.append(v.float().norm(dim=-1).mean())
                 kv_means_k.append(k.float().mean(dim=2))
