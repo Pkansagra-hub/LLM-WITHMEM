@@ -456,11 +456,16 @@ class MultiBankMemoryEncoder(nn.Module):
         kv_norm = torch.stack(kv_norms).mean()
 
         if return_diagnostics:
-            return kv_pairs, gate_values, kv_norm, {
-                "wm_attention": wm_attn.detach(),
-                "query_vector": query_vector.detach(),
-                "bank_slot_shapes": [bs.shape for bs in bank_slots],
-            }
+            return (
+                kv_pairs,
+                gate_values,
+                kv_norm,
+                {
+                    "wm_attention": wm_attn.detach(),
+                    "query_vector": query_vector.detach(),
+                    "bank_slot_shapes": [bs.shape for bs in bank_slots],
+                },
+            )
         return kv_pairs, gate_values, kv_norm
 
     # ── diagnostics ──────────────────────────────────────────────────

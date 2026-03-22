@@ -171,7 +171,9 @@ def main():
         profile_ids, profile_mask, q_sem_ids, q_sem_mask, return_diagnostics=True
     )
 
-    assert len(kv_pairs) == cfg.model.num_layers, f"Expected {cfg.model.num_layers} layer pairs, got {len(kv_pairs)}"
+    assert (
+        len(kv_pairs) == cfg.model.num_layers
+    ), f"Expected {cfg.model.num_layers} layer pairs, got {len(kv_pairs)}"
     k0, v0 = kv_pairs[0]
     print(
         f"  K shape: {k0.shape}  (expect [1, {cfg.model.num_kv_heads}, {cfg.encoder.num_output_slots}, {cfg.model.head_dim}])"

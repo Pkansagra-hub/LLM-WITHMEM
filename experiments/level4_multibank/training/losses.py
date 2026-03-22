@@ -15,7 +15,6 @@ Three loss components prevent gate collapse:
 import torch
 import torch.nn.functional as F
 
-
 # ── Component losses ─────────────────────────────────────────────────
 
 
@@ -52,7 +51,7 @@ def gate_utilization_loss(
     """
     mean_gate = gate_values.mean()
     shortfall = torch.clamp(target - mean_gate, min=0.0)
-    return shortfall ** 2
+    return shortfall**2
 
 
 def kv_norm_loss(

@@ -111,10 +111,10 @@ class TrainingConfig:
 
     # Loss weights
     lambda_distill: float = 1.0
-    lambda_gate: float = 1.0        # gate utilization penalty
-    lambda_kv_norm: float = 0.1     # KV magnitude matching
-    lambda_entropy: float = 0.01    # gate entropy bonus (prevent binary snap)
-    gate_target: float = 0.3        # target minimum gate mean
+    lambda_gate: float = 1.0  # gate utilization penalty
+    lambda_kv_norm: float = 0.1  # KV magnitude matching
+    lambda_entropy: float = 0.01  # gate entropy bonus (prevent binary snap)
+    gate_target: float = 0.3  # target minimum gate mean
 
     # Misc
     seed: int = 42

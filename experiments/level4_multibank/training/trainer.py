@@ -174,8 +174,14 @@ class Trainer:
         gold_mask = batch["gold_mask"].to(device)
 
         total_loss = torch.tensor(0.0, device=device)
-        agg = {"loss_total": 0.0, "loss_distill": 0.0, "loss_gate": 0.0,
-               "loss_entropy": 0.0, "loss_kv_norm": 0.0, "gate_mean": 0.0}
+        agg = {
+            "loss_total": 0.0,
+            "loss_distill": 0.0,
+            "loss_gate": 0.0,
+            "loss_entropy": 0.0,
+            "loss_kv_norm": 0.0,
+            "gate_mean": 0.0,
+        }
         valid = 0
 
         # Process per-sample (gold/inject have different effective lengths)
@@ -256,7 +262,9 @@ class Trainer:
             gold_logits, _ = self._gold_forward(gold_ids, gold_mask)
 
             # Inject
-            kv_pairs, _, _ = self.encoder(profile_ids, profile_mask, query_ids, query_mask)
+            kv_pairs, _, _ = self.encoder(
+                profile_ids, profile_mask, query_ids, query_mask
+            )
             inject_logits = forward_with_injection(
                 self.llm, suffix_ids, suffix_mask, kv_pairs
             )
