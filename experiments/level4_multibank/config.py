@@ -87,7 +87,7 @@ class EncoderConfig:
 
     # Dynamic gate MLP
     gate_hidden_dim: int = 1536
-    gate_init_bias: float = -2.0  # sigmoid(-2) ≈ 0.12
+    gate_init_bias: float = -1.0  # sigmoid(-1) ≈ 0.27 — start gates meaningfully open
 
 
 @dataclass
@@ -109,8 +109,12 @@ class TrainingConfig:
     save_every: int = 1000
     max_new_tokens: int = 128
 
-    # Loss
+    # Loss weights
     lambda_distill: float = 1.0
+    lambda_gate: float = 1.0        # gate utilization penalty
+    lambda_kv_norm: float = 0.1     # KV magnitude matching
+    lambda_entropy: float = 0.01    # gate entropy bonus (prevent binary snap)
+    gate_target: float = 0.3        # target minimum gate mean
 
     # Misc
     seed: int = 42

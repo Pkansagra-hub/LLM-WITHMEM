@@ -4993,3 +4993,44 @@ DUAL MEMORY APPROACH
     - The correct injection pattern is: (1) tokenize full prompt as single string, (2) find split point after system/profile tokens, (3) extract K,V for prefix, (4) feed suffix with position offset = prefix length.
     - For the memory model, the encoder replaces the LLM's own forward pass for the system prefix. Instead of running profile text through LLM layers, the memory encoder directly produces K,V pairs that encode the same (or better) information.
     - The encoder's training objective becomes clear: minimize the difference between encoder-produced K,V and LLM-extracted K,V (distillation), then fine-tune to SURPASS by compressing thousands of memories into the same K,V budget.
+
+---
+
+## Level 4 Multi-Bank Encoder — Experiment Log
+
+### Run 1: Pure KL Distillation (Llama-3.1-8B-Instruct, 96GB Colab)
+
+**Config:**
+- Encoder: ~103M params (75M trainable, 525M frozen embedding layer), d_model=768, 5 banks (72 slots), 32 output slots, 4 layer groups
+- Training: batch_size=16, grad_accum=1, lr=1e-4, cosine decay, 1500 steps completed
+- Loss: KL distillation only (lambda_distill=1.0, no auxiliary losses)
+- Gate init: sigmoid(-2.0) ≈ 0.12
+
+**Training Metrics (step 1500):**
+- val_loss: 0.1413 (steady improvement from 0.1817 at step 500)
+- train_loss floor: ~0.10–0.17
+
+**Evaluation Results (5 sample queries, checkpoint step 1500):**
+
+| Metric           | Inject         | Gold          | Verdict  |
+|------------------|----------------|---------------|----------|
+| KW hit ratio     | 0–5 per query  | 0–7 per query | FAIL     |
+| Avg PPL          | 26–72          | 3–17          | FAIL     |
+| Gate mean        | 0.098          | —             | COLLAPSED|
+| Gate std          | 0.067          | —             | NO SPECIALIZATION |
+| Output quality   | Token soup (articles, prepositions, fragments) | Coherent text | FAIL |
+
+**Root Cause: Degenerate Gate Collapse**
+- KL distillation has a trivial minimum: if gates → 0, then inject_logits ≈ gold_logits (memory contributes nothing), so KL ≈ 0.
+- The optimizer discovered this shortcut — gates went DOWN from init (0.12 → 0.098) instead of up.
+- Gate std is tiny (0.067) — no query-dependent specialization.
+- The ~10% of injection that leaks through has wrong KV magnitude, producing attention garbage → token soup.
+- val_loss looked deceptively healthy because it was measuring how well the encoder learned to do NOTHING.
+
+**Fix Applied (Run 2 pending):**
+1. **Gate utilization loss** — soft hinge penalty: max(0, target - mean_gate)², target=0.3
+2. **KV norm matching** — MSE between encoder KV norms and LLM's natural KV norms
+3. **Gate entropy bonus** — negative binary entropy to prevent gates snapping to 0/1
+4. **Gate init raised** — sigmoid(-1.0) ≈ 0.27 instead of sigmoid(-2.0) ≈ 0.12
+
+**Key Lesson:** Pure KL distillation with gated injection is degenerate — the gate is a free variable that the optimizer zeros out for a trivial loss minimum. ALWAYS pair gated injection with a gate utilization floor.

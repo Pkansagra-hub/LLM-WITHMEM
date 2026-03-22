@@ -167,11 +167,11 @@ def main():
 
     # ── CHECK 1: Forward pass ─────────────────────────────────────
     print_header("CHECK 1: Forward pass + shapes")
-    kv_pairs, diag = encoder(
+    kv_pairs, gate_values_fwd, kv_norm_fwd, diag = encoder(
         profile_ids, profile_mask, q_sem_ids, q_sem_mask, return_diagnostics=True
     )
 
-    assert len(kv_pairs) == 24, f"Expected 24 layer pairs, got {len(kv_pairs)}"
+    assert len(kv_pairs) == cfg.model.num_layers, f"Expected {cfg.model.num_layers} layer pairs, got {len(kv_pairs)}"
     k0, v0 = kv_pairs[0]
     print(
         f"  K shape: {k0.shape}  (expect [1, {cfg.model.num_kv_heads}, {cfg.encoder.num_output_slots}, {cfg.model.head_dim}])"
@@ -184,7 +184,7 @@ def main():
         cfg.model.head_dim,
     )
     assert k0.dtype == torch.float16
-    print("  ✓ All 24 K,V pairs have correct shape and dtype")
+    print(f"  ✓ All {cfg.model.num_layers} K,V pairs have correct shape and dtype")
 
     # ── CHECK 2: Parameter count ──────────────────────────────────
     print_header("CHECK 2: Parameter count")
@@ -235,19 +235,19 @@ def main():
     print_header("CHECK 4: Dynamic gate variation")
     encoder.eval()
     with torch.no_grad():
-        _, diag_sem = encoder(
+        _, gates_sem_t, _, diag_sem = encoder(
             profile_ids, profile_mask, q_sem_ids, q_sem_mask, return_diagnostics=True
         )
-        _, diag_epi = encoder(
+        _, gates_epi_t, _, diag_epi = encoder(
             profile_ids, profile_mask, q_epi_ids, q_epi_mask, return_diagnostics=True
         )
-        _, diag_emo = encoder(
+        _, gates_emo_t, _, diag_emo = encoder(
             profile_ids, profile_mask, q_emo_ids, q_emo_mask, return_diagnostics=True
         )
 
-    gates_sem = diag_sem["gate_values"].squeeze(0)  # (24, 32)
-    gates_epi = diag_epi["gate_values"].squeeze(0)
-    gates_emo = diag_emo["gate_values"].squeeze(0)
+    gates_sem = gates_sem_t.squeeze(0)  # (num_layers, num_heads)
+    gates_epi = gates_epi_t.squeeze(0)
+    gates_emo = gates_emo_t.squeeze(0)
 
     diff_sem_epi = (gates_sem - gates_epi).abs().mean().item()
     diff_sem_emo = (gates_sem - gates_emo).abs().mean().item()
@@ -361,7 +361,7 @@ def main():
         qi, qm, si, sm, gi, gm, qtype = steps_data[step % 2]
 
         # Encoder forward
-        kv = encoder(profile_ids, profile_mask, qi, qm)
+        kv = encoder(profile_ids, profile_mask, qi, qm)[0]
 
         # Inject forward
         inject_logits = forward_with_injection(model, si, sm, kv)
@@ -400,15 +400,15 @@ def main():
     print_header("CHECK 8: Post-training gate diagnostic")
     encoder.eval()
     with torch.no_grad():
-        _, diag_sem_post = encoder(
+        _, diag_sem_post_gate, _, diag_sem_post = encoder(
             profile_ids, profile_mask, q_sem_ids, q_sem_mask, return_diagnostics=True
         )
-        _, diag_epi_post = encoder(
+        _, diag_epi_post_gate, _, diag_epi_post = encoder(
             profile_ids, profile_mask, q_epi_ids, q_epi_mask, return_diagnostics=True
         )
 
-    gates_sem_post = diag_sem_post["gate_values"].squeeze(0)
-    gates_epi_post = diag_epi_post["gate_values"].squeeze(0)
+    gates_sem_post = diag_sem_post_gate.squeeze(0)
+    gates_epi_post = diag_epi_post_gate.squeeze(0)
     diff_post = (gates_sem_post - gates_epi_post).abs().mean().item()
     print(f"  Gate diff (semantic vs episodic) PRE-train:  {diff_sem_epi:.6f}")
     print(f"  Gate diff (semantic vs episodic) POST-train: {diff_post:.6f}")

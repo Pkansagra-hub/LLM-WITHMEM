@@ -396,9 +396,11 @@ class MultiBankMemoryEncoder(nn.Module):
             profile_mask: (B, P) — 1 = real, 0 = pad
             query_ids:    (B, Q) — tokenized raw query
             query_mask:   (B, Q)
-            return_diagnostics: if True, return (kv_pairs, diag_dict)
+            return_diagnostics: if True, return extended diag dict
         Returns:
-            kv_pairs: list of num_layers (K, V) tuples, each (B, num_kv_heads, M, head_dim) in fp16
+            kv_pairs:     list of num_layers (K, V) tuples, each (B, kv_heads, M, head_dim) fp16
+            gate_values:  (B, num_layers, num_heads) — always returned for loss computation
+            kv_norm:      scalar — mean L2 norm of encoder K,V (for KV norm loss)
         """
         B = profile_ids.shape[0]
 
@@ -424,6 +426,7 @@ class MultiBankMemoryEncoder(nn.Module):
 
         # 6. Project to K,V for each LLM layer, apply per-head gates
         kv_pairs = []
+        kv_norms = []
         for layer_idx in range(self.num_llm_layers):
             group_idx = self.layer_to_group[layer_idx].item()
 
@@ -438,6 +441,10 @@ class MultiBankMemoryEncoder(nn.Module):
                 B, self.num_output_slots, self.num_kv_heads, self.head_dim
             ).transpose(1, 2)
 
+            # Track pre-gate KV norms for norm matching loss
+            kv_norms.append(k.float().norm(dim=-1).mean())
+            kv_norms.append(v.float().norm(dim=-1).mean())
+
             # Gate: (B, num_heads) → (B, num_heads, 1, 1) for broadcast
             gate = gate_values[:, layer_idx, :].view(B, self.num_kv_heads, 1, 1)
             k = (k * gate).half()
@@ -445,14 +452,16 @@ class MultiBankMemoryEncoder(nn.Module):
 
             kv_pairs.append((k, v))
 
+        # Mean KV norm across all layers (pre-gate, for norm loss)
+        kv_norm = torch.stack(kv_norms).mean()
+
         if return_diagnostics:
-            return kv_pairs, {
-                "gate_values": gate_values.detach(),
+            return kv_pairs, gate_values, kv_norm, {
                 "wm_attention": wm_attn.detach(),
                 "query_vector": query_vector.detach(),
                 "bank_slot_shapes": [bs.shape for bs in bank_slots],
             }
-        return kv_pairs
+        return kv_pairs, gate_values, kv_norm
 
     # ── diagnostics ──────────────────────────────────────────────────
 

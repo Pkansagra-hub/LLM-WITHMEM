@@ -80,7 +80,7 @@ def evaluate_encoder(config, llm, tokenizer, encoder, val_data, max_samples=50):
         query_mask = sample["query_mask"].unsqueeze(0).to(device)
 
         # Encoder forward with diagnostics
-        kv_pairs, diag = encoder(
+        kv_pairs, gate_values, _, diag = encoder(
             profile_ids, profile_mask, query_ids, query_mask, return_diagnostics=True
         )
 
@@ -120,7 +120,7 @@ def evaluate_encoder(config, llm, tokenizer, encoder, val_data, max_samples=50):
         ppl_gold = score_coherence(llm, tokenizer, gold_text, device)
 
         # Gate stats
-        gate_values = diag["gate_values"].squeeze(0)  # (24, 32)
+        gate_vals = gate_values.squeeze(0)  # (num_layers, num_heads)
 
         results.append(
             {
@@ -133,8 +133,8 @@ def evaluate_encoder(config, llm, tokenizer, encoder, val_data, max_samples=50):
                 "kw_total": kw_inject["total_facts"],
                 "ppl_inject": round(ppl_inject, 2),
                 "ppl_gold": round(ppl_gold, 2),
-                "gate_mean": round(gate_values.mean().item(), 4),
-                "gate_std": round(gate_values.std().item(), 4),
+                "gate_mean": round(gate_vals.mean().item(), 4),
+                "gate_std": round(gate_vals.std().item(), 4),
             }
         )
         n += 1
