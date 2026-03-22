@@ -127,8 +127,10 @@ class Trainer:
             kv_norms = []
             kv_means_k = []
             kv_means_v = []
-            for layer_idx in range(len(cache)):
-                k, v = cache[layer_idx]
+            num_layers = len(cache.key_cache)
+            for layer_idx in range(num_layers):
+                k = cache.key_cache[layer_idx]
+                v = cache.value_cache[layer_idx]
                 kv_norms.append(k.float().norm(dim=-1).mean())
                 kv_norms.append(v.float().norm(dim=-1).mean())
                 kv_means_k.append(k.float().mean(dim=2))
