@@ -127,12 +127,15 @@ class Trainer:
             kv_norms = []
             kv_means_k = []
             kv_means_v = []
-            # Convert DynamicCache → tuple-of-tuples for universal compat
-            if hasattr(cache, "to_legacy_cache"):
-                cache = cache.to_legacy_cache()
-            elif hasattr(cache, "key_cache"):
-                cache = list(zip(cache.key_cache, cache.value_cache))
-            for k, v in cache:
+            # Extract per-layer K,V from cache (handles all transformers versions)
+            if hasattr(cache, "key_cache"):
+                layer_kvs = list(zip(cache.key_cache, cache.value_cache))
+            elif hasattr(cache, "to_legacy_cache"):
+                legacy = cache.to_legacy_cache()
+                layer_kvs = [(t[0], t[1]) for t in legacy]
+            else:
+                layer_kvs = [(t[0], t[1]) for t in cache]
+            for k, v in layer_kvs:
                 kv_norms.append(k.float().norm(dim=-1).mean())
                 kv_norms.append(v.float().norm(dim=-1).mean())
                 kv_means_k.append(k.float().mean(dim=2))
