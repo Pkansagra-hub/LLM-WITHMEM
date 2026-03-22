@@ -109,12 +109,12 @@ class Trainer:
 
     def _gold_forward(
         self, gold_ids: torch.Tensor, gold_mask: torch.Tensor
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, dict]:
         """Run gold-standard forward pass.
 
         Returns:
             logits: (B, L, V)
-            gold_kv_norm: scalar — mean L2 norm of LLM's own K,V (for norm matching)
+            gold_aux: dict with per-layer KV norms and mean directions
         """
         with torch.no_grad():
             outputs = self.llm(
@@ -123,15 +123,22 @@ class Trainer:
                 use_cache=True,
                 return_dict=True,
             )
-            # Extract KV norms from LLM's own cache for norm matching
             cache = outputs.past_key_values
             kv_norms = []
+            kv_means_k = []
+            kv_means_v = []
             for layer_idx in range(len(cache)):
                 k, v = cache[layer_idx]
                 kv_norms.append(k.float().norm(dim=-1).mean())
                 kv_norms.append(v.float().norm(dim=-1).mean())
-            gold_kv_norm = torch.stack(kv_norms).mean()
-        return outputs.logits, gold_kv_norm
+                kv_means_k.append(k.float().mean(dim=2))
+                kv_means_v.append(v.float().mean(dim=2))
+            gold_aux = {
+                "kv_norms": torch.stack(kv_norms),
+                "kv_means_k": torch.stack(kv_means_k, dim=1),
+                "kv_means_v": torch.stack(kv_means_v, dim=1),
+            }
+        return outputs.logits, gold_aux
 
     def _inject_forward(
         self,
@@ -141,19 +148,19 @@ class Trainer:
         query_mask: torch.Tensor,
         suffix_ids: torch.Tensor,
         suffix_mask: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         """Encoder forward → K,V → inject into LLM with suffix → logits.
 
         Returns:
             logits:      (B, S, V)
             gate_values: (B, num_layers, num_heads) — for gate loss
-            kv_norm:     scalar — encoder KV norm for norm matching
+            enc_aux:     dict — per-layer KV norms and mean directions
         """
-        kv_pairs, gate_values, kv_norm = self.encoder(
+        kv_pairs, gate_values, enc_aux = self.encoder(
             profile_ids, profile_mask, query_ids, query_mask
         )
         logits = forward_with_injection(self.llm, suffix_ids, suffix_mask, kv_pairs)
-        return logits, gate_values, kv_norm
+        return logits, gate_values, enc_aux
 
     def train_step(self, batch: dict) -> dict:
         """Single training step on one batch.
@@ -180,19 +187,22 @@ class Trainer:
             "loss_gate": 0.0,
             "loss_entropy": 0.0,
             "loss_kv_norm": 0.0,
+            "loss_kv_cosine": 0.0,
             "gate_mean": 0.0,
+            "gate_layer_min": 0.0,
+            "gate_layer_max": 0.0,
         }
         valid = 0
 
         # Process per-sample (gold/inject have different effective lengths)
         for i in range(B):
-            # Gold forward — also captures LLM KV norms
+            # Gold forward — captures LLM KV norms + mean directions
             gi = gold_ids[i : i + 1]
             gm = gold_mask[i : i + 1]
-            gold_logits, gold_kv_norm = self._gold_forward(gi, gm)
+            gold_logits, gold_aux = self._gold_forward(gi, gm)
 
-            # Inject forward — also returns gate values + encoder KV norm
-            inject_logits, gate_values, enc_kv_norm = self._inject_forward(
+            # Inject forward — returns gate values + encoder aux (norms, means)
+            inject_logits, gate_values, enc_aux = self._inject_forward(
                 profile_ids[i : i + 1],
                 profile_mask[i : i + 1],
                 query_ids[i : i + 1],
@@ -214,12 +224,13 @@ class Trainer:
                 gold_suffix,
                 sm,
                 gate_values=gate_values,
-                encoder_kv_norm=enc_kv_norm,
-                gold_kv_norm=gold_kv_norm,
+                enc_aux=enc_aux,
+                gold_aux=gold_aux,
                 lambda_distill=cfg.lambda_distill,
                 lambda_gate=cfg.lambda_gate,
                 lambda_kv_norm=cfg.lambda_kv_norm,
                 lambda_entropy=cfg.lambda_entropy,
+                lambda_kv_cosine=cfg.lambda_kv_cosine,
                 gate_target=cfg.gate_target,
             )
             total_loss = total_loss + loss
@@ -317,7 +328,6 @@ class Trainer:
                 kv_pairs,
                 suffix_ids,
                 max_new_tokens=self.config.training.max_new_tokens,
-                temperature=0.7,
             )
 
             # Gold generation
@@ -429,8 +439,11 @@ class Trainer:
                             f"(kl={loss_dict['loss_distill']:.3f} "
                             f"gate={loss_dict.get('loss_gate', 0):.3f} "
                             f"ent={loss_dict.get('loss_entropy', 0):.4f} "
-                            f"kv={loss_dict.get('loss_kv_norm', 0):.3f}) | "
-                            f"g={loss_dict.get('gate_mean', 0):.3f} | "
+                            f"kv={loss_dict.get('loss_kv_norm', 0):.3f} "
+                            f"cos={loss_dict.get('loss_kv_cosine', 0):.3f}) | "
+                            f"g={loss_dict.get('gate_mean', 0):.3f} "
+                            f"[{loss_dict.get('gate_layer_min', 0):.2f}-"
+                            f"{loss_dict.get('gate_layer_max', 0):.2f}] | "
                             f"lr {lr:.2e} | "
                             f"VRAM {vram:.1f}G | "
                             f"time {elapsed:.0f}s"
@@ -444,7 +457,10 @@ class Trainer:
                             "gate_loss": loss_dict.get("loss_gate", 0.0),
                             "entropy_loss": loss_dict.get("loss_entropy", 0.0),
                             "kv_norm_loss": loss_dict.get("loss_kv_norm", 0.0),
+                            "kv_cosine_loss": loss_dict.get("loss_kv_cosine", 0.0),
                             "gate_mean": loss_dict.get("gate_mean", 0.0),
+                            "gate_layer_min": loss_dict.get("gate_layer_min", 0.0),
+                            "gate_layer_max": loss_dict.get("gate_layer_max", 0.0),
                         }
                     )
 

@@ -77,11 +77,16 @@ def generate_with_injection(
     suffix_ids: torch.Tensor,
     max_new_tokens: int = 128,
     temperature: float = 0.7,
+    do_sample: bool = False,
 ) -> str:
     """Autoregressive generation with injected memory K,V.
 
     Uses manual token-by-token loop (not model.generate()) for
     full control over the injection cache.
+
+    Args:
+        do_sample: if False (default), use greedy argmax decoding.
+                   if True, use temperature-scaled multinomial sampling.
     """
     device = suffix_ids.device
     num_mem = kv_pairs[0][0].shape[2]
@@ -105,8 +110,11 @@ def generate_with_injection(
         use_cache=True,
     )
     cache = outputs.past_key_values
-    next_token = outputs.logits[:, -1, :].div(temperature).softmax(-1)
-    next_id = torch.multinomial(next_token, 1)
+    if do_sample:
+        next_token = outputs.logits[:, -1, :].div(temperature).softmax(-1)
+        next_id = torch.multinomial(next_token, 1)
+    else:
+        next_id = outputs.logits[:, -1, :].argmax(dim=-1, keepdim=True)
     generated = [next_id.item()]
     total_len = num_mem + seq_len + 1
 
@@ -124,8 +132,11 @@ def generate_with_injection(
             use_cache=True,
         )
         cache = outputs.past_key_values
-        next_token = outputs.logits[:, -1, :].div(temperature).softmax(-1)
-        next_id = torch.multinomial(next_token, 1)
+        if do_sample:
+            next_token = outputs.logits[:, -1, :].div(temperature).softmax(-1)
+            next_id = torch.multinomial(next_token, 1)
+        else:
+            next_id = outputs.logits[:, -1, :].argmax(dim=-1, keepdim=True)
         generated.append(next_id.item())
         total_len += 1
 

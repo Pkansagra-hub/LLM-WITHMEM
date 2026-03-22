@@ -1,15 +1,19 @@
 """
 Training losses for Level 4 Multi-Bank Encoder.
 
-Three loss components prevent gate collapse:
+Five loss components prevent gate collapse and ensure quality injection:
 
   1. KL distillation — match inject logits to gold logits.
-  2. Gate utilization — penalize gates below a target mean.
+  2. Gate utilization (per-layer) — penalize each layer's gates below a target.
      Without this, the optimizer zeroes gates for a free KL minimum.
-  3. KV norm matching — align encoder KV magnitude with natural LLM KV
-     so that when gates *are* open, the injected content is on-scale.
+     Uses linear + squared hinge for stronger gradient pull.
+  3. KV norm matching (per-layer) — align encoder KV magnitude per layer
+     with natural LLM KV so injected content is on-scale.
   4. Gate entropy bonus — prevent gates from snapping to 0/1 binary,
      encourage smooth query-dependent modulation.
+  5. KV cosine imitation — force encoder KV mean directions to match
+     the LLM's natural KV directions per (layer, head), ensuring the
+     encoder speaks the LLM's internal dialect.
 """
 
 import torch
@@ -38,38 +42,38 @@ def gate_utilization_loss(
     gate_values: torch.Tensor,
     target: float = 0.3,
 ) -> torch.Tensor:
-    """Penalize when mean gate activation falls below target.
+    """Per-layer gate utilization penalty.
 
-    Uses a soft hinge: max(0, target - mean_gate)² so there's zero
-    penalty once gates reach the target and smooth gradient below it.
+    Each layer's mean gate should meet the target. Uses linear + squared
+    hinge for stronger gradient signal when gates are far below target.
 
     Args:
         gate_values: (B, num_layers, num_heads) in [0, 1]
-        target: desired minimum mean gate activation
+        target: desired minimum mean gate activation per layer
     Returns:
         scalar loss
     """
-    mean_gate = gate_values.mean()
-    shortfall = torch.clamp(target - mean_gate, min=0.0)
-    return shortfall**2
+    per_layer_mean = gate_values.mean(dim=(0, 2))  # (num_layers,)
+    shortfall = torch.clamp(target - per_layer_mean, min=0.0)
+    return shortfall.mean() + shortfall.pow(2).mean()
 
 
 def kv_norm_loss(
-    encoder_kv_norm: torch.Tensor,
-    gold_kv_norm: torch.Tensor,
+    enc_kv_norms: torch.Tensor,
+    gold_kv_norms: torch.Tensor,
 ) -> torch.Tensor:
-    """Penalize mismatch between encoder KV norms and LLM natural KV norms.
+    """Per-layer KV norm matching.
 
-    Encourages the encoder to produce K,V at the same magnitude the LLM
-    naturally expects, so gated injection doesn't corrupt attention scores.
+    Aligns encoder K,V magnitude per layer with the LLM's natural
+    K,V norms, so gated injection doesn't corrupt attention scores.
 
     Args:
-        encoder_kv_norm: scalar — mean L2 norm of encoder K,V across all layers
-        gold_kv_norm:    scalar — mean L2 norm of LLM's own K,V (detached)
+        enc_kv_norms:  (N,) — per-layer K,V norms from encoder (2 per layer)
+        gold_kv_norms: (N,) — per-layer K,V norms from LLM gold cache
     Returns:
-        scalar loss
+        scalar loss — MSE across all per-layer norms
     """
-    return F.mse_loss(encoder_kv_norm, gold_kv_norm.detach())
+    return F.mse_loss(enc_kv_norms, gold_kv_norms.detach())
 
 
 def gate_entropy_loss(
@@ -93,6 +97,37 @@ def gate_entropy_loss(
     return -entropy.mean()
 
 
+def kv_cosine_loss(
+    enc_means_k: torch.Tensor,
+    enc_means_v: torch.Tensor,
+    gold_means_k: torch.Tensor,
+    gold_means_v: torch.Tensor,
+) -> torch.Tensor:
+    """KV-space cosine imitation loss.
+
+    Forces encoder KV mean directions to align with the LLM's natural
+    KV directions per (layer, head). This ensures the encoder produces
+    KV that is compatible with the LLM's internal representation space.
+
+    Args:
+        enc_means_k:  (B, num_layers, num_kv_heads, head_dim)
+        enc_means_v:  (B, num_layers, num_kv_heads, head_dim)
+        gold_means_k: (B, num_layers, num_kv_heads, head_dim)
+        gold_means_v: (B, num_layers, num_kv_heads, head_dim)
+    Returns:
+        scalar loss (1 - mean cosine similarity)
+    """
+    B, L, H, D = enc_means_k.shape
+    enc_k = enc_means_k.reshape(B, L * H, D)
+    gold_k = gold_means_k.detach().reshape(B, L * H, D)
+    enc_v = enc_means_v.reshape(B, L * H, D)
+    gold_v = gold_means_v.detach().reshape(B, L * H, D)
+
+    cos_k = F.cosine_similarity(enc_k, gold_k, dim=-1).mean()
+    cos_v = F.cosine_similarity(enc_v, gold_v, dim=-1).mean()
+    return 1.0 - (cos_k + cos_v) / 2.0
+
+
 # ── Combined loss ────────────────────────────────────────────────────
 
 
@@ -101,12 +136,13 @@ def combined_loss(
     gold_logits: torch.Tensor,
     suffix_mask: torch.Tensor,
     gate_values: torch.Tensor | None = None,
-    encoder_kv_norm: torch.Tensor | None = None,
-    gold_kv_norm: torch.Tensor | None = None,
+    enc_aux: dict | None = None,
+    gold_aux: dict | None = None,
     lambda_distill: float = 1.0,
-    lambda_gate: float = 1.0,
+    lambda_gate: float = 2.0,
     lambda_kv_norm: float = 0.1,
     lambda_entropy: float = 0.01,
+    lambda_kv_cosine: float = 0.5,
     gate_target: float = 0.3,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     """Compute total loss with all components + breakdown for logging."""
@@ -124,13 +160,23 @@ def combined_loss(
         metrics["loss_gate"] = l_gate.item()
         metrics["loss_entropy"] = l_ent.item()
         metrics["gate_mean"] = gate_values.mean().item()
+        per_layer = gate_values.mean(dim=(0, 2))
+        metrics["gate_layer_min"] = per_layer.min().item()
+        metrics["gate_layer_max"] = per_layer.max().item()
 
-    if encoder_kv_norm is not None and gold_kv_norm is not None:
-        l_kv = kv_norm_loss(encoder_kv_norm, gold_kv_norm)
+    if enc_aux is not None and gold_aux is not None:
+        l_kv = kv_norm_loss(enc_aux["kv_norms"], gold_aux["kv_norms"])
         total = total + lambda_kv_norm * l_kv
         metrics["loss_kv_norm"] = l_kv.item()
-        metrics["enc_kv_norm"] = encoder_kv_norm.item()
-        metrics["gold_kv_norm"] = gold_kv_norm.item()
+
+        l_cos = kv_cosine_loss(
+            enc_aux["kv_means_k"],
+            enc_aux["kv_means_v"],
+            gold_aux["kv_means_k"],
+            gold_aux["kv_means_v"],
+        )
+        total = total + lambda_kv_cosine * l_cos
+        metrics["loss_kv_cosine"] = l_cos.item()
 
     metrics["loss_total"] = total.item()
     return total, metrics

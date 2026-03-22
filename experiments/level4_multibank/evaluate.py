@@ -95,7 +95,6 @@ def evaluate_encoder(config, llm, tokenizer, encoder, val_data, max_samples=50):
             kv_pairs,
             suffix_ids,
             max_new_tokens=config.training.max_new_tokens,
-            temperature=0.7,
         )
 
         # Gold generation
@@ -121,6 +120,7 @@ def evaluate_encoder(config, llm, tokenizer, encoder, val_data, max_samples=50):
 
         # Gate stats
         gate_vals = gate_values.squeeze(0)  # (num_layers, num_heads)
+        per_layer_gates = gate_vals.mean(dim=1)  # (num_layers,)
 
         results.append(
             {
@@ -135,6 +135,8 @@ def evaluate_encoder(config, llm, tokenizer, encoder, val_data, max_samples=50):
                 "ppl_gold": round(ppl_gold, 2),
                 "gate_mean": round(gate_vals.mean().item(), 4),
                 "gate_std": round(gate_vals.std().item(), 4),
+                "gate_layer_min": round(per_layer_gates.min().item(), 4),
+                "gate_layer_max": round(per_layer_gates.max().item(), 4),
             }
         )
         n += 1

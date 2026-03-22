@@ -167,7 +167,7 @@ def main():
 
     # ── CHECK 1: Forward pass ─────────────────────────────────────
     print_header("CHECK 1: Forward pass + shapes")
-    kv_pairs, gate_values_fwd, kv_norm_fwd, diag = encoder(
+    kv_pairs, gate_values_fwd, enc_aux_fwd, diag = encoder(
         profile_ids, profile_mask, q_sem_ids, q_sem_mask, return_diagnostics=True
     )
 

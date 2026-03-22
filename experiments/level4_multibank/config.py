@@ -111,9 +111,10 @@ class TrainingConfig:
 
     # Loss weights
     lambda_distill: float = 1.0
-    lambda_gate: float = 1.0  # gate utilization penalty
+    lambda_gate: float = 2.0  # gate utilization penalty (per-layer, strengthened)
     lambda_kv_norm: float = 0.1  # KV magnitude matching
     lambda_entropy: float = 0.01  # gate entropy bonus (prevent binary snap)
+    lambda_kv_cosine: float = 0.5  # KV cosine imitation (match LLM KV directions)
     gate_target: float = 0.3  # target minimum gate mean
 
     # Misc

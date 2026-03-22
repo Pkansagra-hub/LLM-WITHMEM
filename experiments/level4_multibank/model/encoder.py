@@ -400,7 +400,10 @@ class MultiBankMemoryEncoder(nn.Module):
         Returns:
             kv_pairs:     list of num_layers (K, V) tuples, each (B, kv_heads, M, head_dim) fp16
             gate_values:  (B, num_layers, num_heads) — always returned for loss computation
-            kv_norm:      scalar — mean L2 norm of encoder K,V (for KV norm loss)
+            enc_aux:      dict with:
+                          - kv_norms: (num_layers*2,) — per-layer K,V L2 norms (pre-gate)
+                          - kv_means_k: (B, L, H, D) — per-layer per-head mean K directions
+                          - kv_means_v: (B, L, H, D) — per-layer per-head mean V directions
         """
         B = profile_ids.shape[0]
 
@@ -427,6 +430,8 @@ class MultiBankMemoryEncoder(nn.Module):
         # 6. Project to K,V for each LLM layer, apply per-head gates
         kv_pairs = []
         kv_norms = []
+        kv_means_k = []
+        kv_means_v = []
         for layer_idx in range(self.num_llm_layers):
             group_idx = self.layer_to_group[layer_idx].item()
 
@@ -441,9 +446,13 @@ class MultiBankMemoryEncoder(nn.Module):
                 B, self.num_output_slots, self.num_kv_heads, self.head_dim
             ).transpose(1, 2)
 
-            # Track pre-gate KV norms for norm matching loss
+            # Track pre-gate KV norms (per-layer) for norm matching loss
             kv_norms.append(k.float().norm(dim=-1).mean())
             kv_norms.append(v.float().norm(dim=-1).mean())
+
+            # Track pre-gate KV mean directions (per-layer, per-head) for cosine loss
+            kv_means_k.append(k.float().mean(dim=2))  # (B, num_kv_heads, head_dim)
+            kv_means_v.append(v.float().mean(dim=2))
 
             # Gate: (B, num_heads) → (B, num_heads, 1, 1) for broadcast
             gate = gate_values[:, layer_idx, :].view(B, self.num_kv_heads, 1, 1)
@@ -452,21 +461,25 @@ class MultiBankMemoryEncoder(nn.Module):
 
             kv_pairs.append((k, v))
 
-        # Mean KV norm across all layers (pre-gate, for norm loss)
-        kv_norm = torch.stack(kv_norms).mean()
+        # Auxiliary info for loss computation
+        enc_aux = {
+            "kv_norms": torch.stack(kv_norms),  # (num_layers*2,)
+            "kv_means_k": torch.stack(kv_means_k, dim=1),  # (B, L, H, D)
+            "kv_means_v": torch.stack(kv_means_v, dim=1),  # (B, L, H, D)
+        }
 
         if return_diagnostics:
             return (
                 kv_pairs,
                 gate_values,
-                kv_norm,
+                enc_aux,
                 {
                     "wm_attention": wm_attn.detach(),
                     "query_vector": query_vector.detach(),
                     "bank_slot_shapes": [bs.shape for bs in bank_slots],
                 },
             )
-        return kv_pairs, gate_values, kv_norm
+        return kv_pairs, gate_values, enc_aux
 
     # ── diagnostics ──────────────────────────────────────────────────
 
